@@ -98,12 +98,41 @@ def get_git_status(repo_path):
         return None
 
 
+def scan_directory_for_git_repos(directory):
+    """递归扫描指定目录下的所有子目录，查找git仓库"""
+    git_repos = []
+
+    try:
+        # 使用 os.walk 递归遍历所有子目录
+        for root, dirs, files in os.walk(directory):
+            # 检查当前目录是否是git仓库
+            if is_git_repo(root):
+                git_repos.append(root)
+                # 如果当前目录是git仓库，不再深入其子目录
+                # 因为git仓库内部的.git不算独立仓库
+                dirs.clear()
+                continue
+
+            # 过滤掉一些不需要扫描的目录（可选优化）
+            # 移除以.开头的隐藏目录（除了.git已经在上面处理）
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+    except PermissionError:
+        # 跳过没有权限访问的目录
+        pass
+    except Exception as e:
+        # 跳过其他错误
+        pass
+
+    return git_repos
+
+
 def main():
     # 获取脚本所在目录的父目录
     script_dir = Path(__file__).resolve().parent
     parent_dir = script_dir.parent
 
-    print(f"扫描目录: {parent_dir}")
+    print(f"正在递归扫描上层目录及其所有子目录: {parent_dir}")
     print("=" * 80)
     print()
 
@@ -113,35 +142,30 @@ def main():
     total_staged_count = 0
     total_untracked_count = 0
 
-    # 遍历父目录下的所有子文件夹
-    try:
-        for item in os.listdir(parent_dir):
-            item_path = os.path.join(parent_dir, item)
+    # 扫描父目录下的所有git仓库（递归）
+    print(f"正在扫描...")
+    repos_in_dir = scan_directory_for_git_repos(parent_dir)
 
-            # 只检查文件夹
-            if not os.path.isdir(item_path):
-                continue
+    # 检查每个git仓库的状态
+    for repo_path in repos_in_dir:
+        repo_name = os.path.basename(repo_path)
+        git_repos.append(repo_path)
 
-            # 检查是否是git仓库
-            if is_git_repo(item_path):
-                git_repos.append(item)
+        # 获取git状态
+        status_info = get_git_status(repo_path)
 
-                # 获取git状态
-                status_info = get_git_status(item_path)
+        if status_info:
+            repos_with_changes.append({
+                'name': repo_name,
+                'path': repo_path,
+                'status': status_info
+            })
+            total_modified_count += len(status_info['modified'])
+            total_staged_count += len(status_info['staged'])
+            total_untracked_count += len(status_info['untracked'])
 
-                if status_info:
-                    repos_with_changes.append({
-                        'name': item,
-                        'path': item_path,
-                        'status': status_info
-                    })
-                    total_modified_count += len(status_info['modified'])
-                    total_staged_count += len(status_info['staged'])
-                    total_untracked_count += len(status_info['untracked'])
-
-    except Exception as e:
-        print(f"错误: {e}")
-        return
+    print()
+    print("=" * 80)
 
     # 输出结果
     print(f"找到 {len(git_repos)} 个 Git 仓库")
