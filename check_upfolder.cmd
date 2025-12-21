@@ -1,0 +1,1 @@
+python                   "D:\files\using\P_CGPIUFUFS\check_git_untracked.py"
