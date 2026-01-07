@@ -7,6 +7,21 @@
 import os
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
+
+
+def make_clickable_path(path):
+    """将Windows路径转换为可点击的超链接格式（OSC 8标准）"""
+    # 将反斜杠转换为正斜杠
+    normalized_path = path.replace('\\', '/')
+    # 对路径进行URL编码
+    encoded_path = quote(normalized_path, safe='/:')
+    # 创建file:// URL
+    file_url = f"file:///{encoded_path}"
+    # 使用OSC 8格式创建超链接
+    # 格式: \033]8;;URL\033\\显示文本\033]8;;\033\\
+    hyperlink = f"\033]8;;{file_url}\033\\{path}\033]8;;\033\\"
+    return hyperlink
 
 
 def is_git_repo(folder_path):
@@ -132,7 +147,7 @@ def main():
     script_dir = Path(__file__).resolve().parent
     parent_dir = script_dir.parent
 
-    print(f"正在递归扫描上层目录及其所有子目录: {parent_dir}")
+    print(f"正在递归扫描上层目录及其所有子目录: {make_clickable_path(str(parent_dir))}")
     print("=" * 80)
     print()
 
@@ -180,7 +195,7 @@ def main():
 
         for repo in repos_with_changes:
             print(f"📁 {repo['name']}")
-            print(f"   路径: {repo['path']}")
+            print(f"   路径: {make_clickable_path(repo['path'])}")
 
             status = repo['status']
 
