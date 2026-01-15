@@ -143,9 +143,9 @@ def scan_directory_for_git_repos(directory):
 
 
 def main():
-    # 获取脚本所在目录的父目录
+    # 获取脚本所在目录的第二层父目录
     script_dir = Path(__file__).resolve().parent
-    parent_dir = script_dir.parent
+    parent_dir = script_dir.parent.parent
 
     print(f"正在递归扫描上层目录及其所有子目录: {make_clickable_path(str(parent_dir))}")
     print("=" * 80)
