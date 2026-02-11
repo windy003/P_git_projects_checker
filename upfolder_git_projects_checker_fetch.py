@@ -10,6 +10,22 @@ from pathlib import Path
 from urllib.parse import quote
 
 
+def load_env(env_path):
+    """从 .env 文件加载环境变量"""
+    if not os.path.isfile(env_path):
+        return {}
+    env_vars = {}
+    with open(env_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' in line:
+                key, value = line.split('=', 1)
+                env_vars[key.strip()] = value.strip()
+    return env_vars
+
+
 def make_clickable_path(path):
     """将Windows路径转换为可点击的超链接格式（OSC 8标准）"""
     # 将反斜杠转换为正斜杠
@@ -236,6 +252,75 @@ def get_git_status(repo_path):
         return None
 
 
+def do_git_add_commit_push(repo_path, commit_message):
+    """对指定仓库执行 git add . → git commit → git push"""
+    repo_name = os.path.basename(repo_path)
+    results = {'add': False, 'commit': False, 'push': False, 'errors': []}
+
+    # git add .
+    try:
+        result = subprocess.run(
+            ['git', 'add', '.'],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        if result.returncode == 0:
+            results['add'] = True
+        else:
+            results['errors'].append(f"git add 失败: {result.stderr.strip()}")
+            return results
+    except Exception as e:
+        results['errors'].append(f"git add 异常: {e}")
+        return results
+
+    # git commit -m "message"
+    try:
+        result = subprocess.run(
+            ['git', 'commit', '-m', commit_message],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        if result.returncode == 0:
+            results['commit'] = True
+        else:
+            stderr = result.stderr.strip()
+            stdout = result.stdout.strip()
+            # nothing to commit 不算错误
+            if 'nothing to commit' in stdout:
+                results['errors'].append("没有需要提交的变更")
+            else:
+                results['errors'].append(f"git commit 失败: {stderr or stdout}")
+            return results
+    except Exception as e:
+        results['errors'].append(f"git commit 异常: {e}")
+        return results
+
+    # git push
+    try:
+        result = subprocess.run(
+            ['git', 'push'],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=60
+        )
+        if result.returncode == 0:
+            results['push'] = True
+        else:
+            results['errors'].append(f"git push 失败: {result.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        results['errors'].append("git push 超时（60秒）")
+    except Exception as e:
+        results['errors'].append(f"git push 异常: {e}")
+
+    return results
+
+
 def scan_directory_for_git_repos(directory):
     """递归扫描指定目录下的所有子目录，查找git仓库"""
     git_repos = []
@@ -266,9 +351,22 @@ def scan_directory_for_git_repos(directory):
 
 
 def main():
-    # 获取脚本所在目录的第二层父目录
+    # 从 .env 文件读取目标目录
     script_dir = Path(__file__).resolve().parent
-    parent_dir = script_dir.parent.parent
+    env_path = script_dir / '.env'
+    env_vars = load_env(str(env_path))
+
+    target_dir = env_vars.get('TARGET_DIR')
+    if not target_dir:
+        print("错误: .env 文件中未设置 TARGET_DIR")
+        print(f"请在 {env_path} 中添加 TARGET_DIR=<要扫描的目录路径>")
+        input("Press Enter to exit...")
+        return
+    parent_dir = Path(target_dir)
+    if not parent_dir.is_dir():
+        print(f"错误: TARGET_DIR 指定的目录不存在: {target_dir}")
+        input("Press Enter to exit...")
+        return
 
     print(f"正在递归扫描上层目录及其所有子目录: {make_clickable_path(str(parent_dir))}")
     print("=" * 80)
@@ -424,6 +522,56 @@ def main():
         print("=" * 80)
     else:
         print("✓ 所有有远程配置的Git仓库都已与远程同步")
+
+    # 批量 add / commit / push
+    if repos_with_changes:
+        print()
+        print("=" * 80)
+        choice = input("是否要对以上所有有变更的仓库执行 git add . / git commit / git push？(y/n): ").strip().lower()
+
+        if choice == 'y':
+            commit_msg = input("请输入 commit 信息: ").strip()
+            if not commit_msg:
+                print("commit 信息不能为空，已取消操作。")
+                return
+
+            print()
+            print(f"即将对 {len(repos_with_changes)} 个仓库执行操作，commit 信息: \"{commit_msg}\"")
+            print("=" * 80)
+            print()
+
+            success_count = 0
+            fail_count = 0
+
+            for repo in repos_with_changes:
+                repo_name = repo['name']
+                repo_path = repo['path']
+                print(f"📁 {repo_name}")
+                print(f"   路径: {repo_path}")
+
+                results = do_git_add_commit_push(repo_path, commit_msg)
+
+                # 显示每一步的结果
+                print(f"   git add .    : {'✓ 成功' if results['add'] else '✗ 失败'}")
+                print(f"   git commit   : {'✓ 成功' if results['commit'] else '✗ 失败'}")
+                print(f"   git push     : {'✓ 成功' if results['push'] else '✗ 失败'}")
+
+                if results['errors']:
+                    for err in results['errors']:
+                        print(f"   ⚠ {err}")
+
+                if results['push']:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                print()
+
+            print("=" * 80)
+            print(f"批量操作完成: 成功 {success_count} 个，失败 {fail_count} 个")
+            print("=" * 80)
+        else:
+            print("已取消操作。")
 
 
 if __name__ == '__main__':
